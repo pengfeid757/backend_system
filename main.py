@@ -1,0 +1,155 @@
+from pathlib import Path
+from typing import Any
+
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+
+from adapters import (
+    cma_adapter,
+    era5_adapter,
+    gfs_adapter,
+    himawari_adapter,
+    radar_adapter,
+    wrf_adapter,
+)
+from services import (
+    cma_service,
+    era5_service,
+    gfs_service,
+    himawari_service,
+    radar_service,
+    wrf_service,
+)
+
+
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
+
+BUSINESS_DIRS = {
+    "CMA": DATA_DIR / "CMA",
+    "ERA5": DATA_DIR / "ERA5",
+    "GFS": DATA_DIR / "GFS",
+    "Himawari": DATA_DIR / "Himawari",
+    "Radar": DATA_DIR / "Radar",
+    "WRF": DATA_DIR / "WRF",
+}
+
+ADAPTERS = {
+    "CMA": cma_adapter,
+    "ERA5": era5_adapter,
+    "GFS": gfs_adapter,
+    "Himawari": himawari_adapter,
+    "Radar": radar_adapter,
+    "WRF": wrf_adapter,
+}
+
+DISPLAY_SERVICES = {
+    "CMA": cma_service,
+    "ERA5": era5_service,
+    "GFS": gfs_service,
+    "HIMAWARI": himawari_service,
+    "RADAR": radar_service,
+    "WRF": wrf_service,
+}
+
+
+app = FastAPI(title="Weather Data Display Backend", version="0.1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+def ok(data: Any = None, message: str = "success") -> dict[str, Any]:
+    return {"code": 0, "data": data, "message": message}
+
+
+def infer_business_type(filename: str) -> str:
+    name = filename.lower()
+    suffix = Path(filename).suffix.lower()
+
+    if "cma" in name:
+        return "CMA"
+    if "era5" in name:
+        return "ERA5"
+    if "gfs" in name:
+        return "GFS"
+    if "himawari" in name or "hsd" in name:
+        return "Himawari"
+    if "radar" in name or "cinrad" in name:
+        return "Radar"
+    if "wrf" in name:
+        return "WRF"
+
+    if suffix in {".grib", ".grib2"}:
+        return "GFS"
+    if suffix == ".hsd":
+        return "Himawari"
+    if suffix in {".cinrad", ".radar"}:
+        return "Radar"
+    if suffix == ".nc":
+        return "ERA5"
+
+    raise ValueError("无法根据文件名或扩展名识别业务类型，请在文件名中包含 CMA、ERA5、GFS、Himawari、Radar 或 WRF。")
+
+
+def save_upload_file(file: UploadFile, target_dir: Path) -> Path:
+    if not file.filename:
+        raise ValueError("上传文件名为空。")
+
+    safe_name = Path(file.filename).name
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / safe_name
+
+    with target_path.open("wb") as output:
+        output.write(file.file.read())
+
+    return target_path
+
+
+@app.get("/")
+def root() -> dict[str, Any]:
+    return ok({"service": "weather-data-display-backend", "docs": "/docs"})
+
+
+@app.get("/api/health")
+def health() -> dict[str, Any]:
+    return ok({"status": "online"})
+
+
+@app.post("/api/files/parse")
+def parse_file(file: UploadFile = File(...)) -> dict[str, Any]:
+    try:
+        business_type = infer_business_type(file.filename or "")
+        saved_path = save_upload_file(file, BUSINESS_DIRS[business_type])
+        meta = ADAPTERS[business_type].process_file(str(saved_path), data_type=business_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return ok(
+        {
+            "file_name": saved_path.name,
+            "directory": str(saved_path.parent).replace("\\", "/") + "/",
+            "business_type": business_type,
+            "meta": meta,
+            "weather_info": meta["weather_info"],
+        }
+    )
+
+
+@app.get("/api/display/{business_type}")
+def display_data(business_type: str) -> dict[str, Any]:
+    service = DISPLAY_SERVICES.get(business_type.upper())
+    if service is None:
+        raise HTTPException(status_code=404, detail="不支持的数据类型。")
+
+    return ok(service.get_display_data())
