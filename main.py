@@ -155,3 +155,8 @@ def display_data(business_type: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="不支持的数据类型。")
 
     return ok(service.get_display_data())
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
