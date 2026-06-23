@@ -149,10 +149,17 @@ def parse_file(file: UploadFile = File(...)) -> dict[str, Any]:
 
 
 @app.get("/api/display/{business_type}")
-def display_data(business_type: str) -> dict[str, Any]:
+def display_data(
+    business_type: str,
+    variable: str | None = Query(default=None),
+    level_index: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
     service = DISPLAY_SERVICES.get(business_type.upper())
     if service is None:
         raise HTTPException(status_code=404, detail="不支持的数据类型。")
+
+    if business_type.upper() == "CMA":
+        return ok(service.get_display_data(variable=variable, level_index=level_index))
 
     return ok(service.get_display_data())
 
