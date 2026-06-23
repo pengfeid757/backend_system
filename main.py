@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from adapters import (
@@ -58,7 +58,7 @@ app = FastAPI(title="Weather Data Display Backend", version="0.1.0")
 
 _cors_origins = os.getenv(
     "CORS_ORIGINS",
-    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174",
+    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:5177,http://127.0.0.1:5177",
 ).split(",")
 
 app.add_middleware(
@@ -69,7 +69,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 def ok(data: Any = None, message: str = "success") -> dict[str, Any]:
     return {"code": 0, "data": data, "message": message}
 
@@ -78,6 +77,8 @@ def infer_business_type(filename: str) -> str:
     name = filename.lower()
     suffix = Path(filename).suffix.lower()
 
+    if name.startswith("z_radr") or "z_radr" in name:
+        return "Radar"
     if "cma" in name:
         return "CMA"
     if "era5" in name:
@@ -95,7 +96,7 @@ def infer_business_type(filename: str) -> str:
         return "GFS"
     if suffix == ".hsd":
         return "Himawari"
-    if suffix in {".cinrad", ".radar"}:
+    if suffix in {".cinrad", ".radar", ".bz2"}:
         return "Radar"
     if suffix == ".nc":
         return "ERA5"
@@ -154,6 +155,27 @@ def display_data(business_type: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="不支持的数据类型。")
 
     return ok(service.get_display_data())
+
+
+@app.get("/api/radar/grid")
+def radar_grid(
+    file: str | None = Query(default=None),
+    product: str = Query(...),
+    level: str = Query(default="max"),
+) -> Response:
+    try:
+        grid = radar_service.get_grid_data(file, product, level)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    headers = {
+        "X-Radar-Nx": str(grid["grid"]["nx"]),
+        "X-Radar-Ny": str(grid["grid"]["ny"]),
+        "X-Radar-Extent": ",".join(str(item) for item in grid["extent"]),
+        "X-Radar-Missing": str(grid["missing"]),
+        "X-Radar-Dtype": grid["dtype"],
+    }
+    return Response(content=grid["bytes"], media_type="application/octet-stream", headers=headers)
 
 
 if __name__ == "__main__":
