@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 from adapters.base import build_dataset_id, write_meta
 
-# 
+
 PRODUCT_VARIABLES = [
     "PM2_5_DRY",
     "PM10",
